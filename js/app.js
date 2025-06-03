@@ -5,8 +5,8 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   let numberOfTables = storedTableConfig
     ? storedTableConfig.numberOfTables
-    : 19;
-  let tableCapacity = storedTableConfig ? storedTableConfig.tableCapacity : 11;
+    : 20;
+  let tableCapacity = storedTableConfig ? storedTableConfig.tableCapacity : 12;
 
   // Elements
   const guestsContainer = document.getElementById("guestsContainer");

@@ -7,65 +7,108 @@
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
-    <div class="container">
-      <h1>Wedding Table Planner</h1>
+    <div class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Local-first seating planner</p>
+          <h1>Wedding Table Planner</h1>
+          <p class="subtitle">
+            Manage guests, tables, and seating conflicts entirely in your
+            browser.
+          </p>
+        </div>
+        <div class="header-actions">
+          <button id="exportJsonBtn" class="secondary">Export JSON</button>
+          <button id="importJsonBtn" class="secondary">Import JSON</button>
+          <button id="clearAllBtn" class="danger">Clear Seating</button>
+        </div>
+      </header>
 
-      <div class="controls">
-        <button id="clearAll">Clear All Tables</button>
-        <button id="saveProgress">Save Progress</button>
-        <button id="guestInfoBtn">Guest Info</button>
-        <div class="status" id="statusMessage"></div>
-      </div>
+      <section class="kpi-grid" aria-label="Planner stats">
+        <article><span>Total guests</span><strong id="statTotalGuests">0</strong></article>
+        <article><span>Assigned guests</span><strong id="statAssignedGuests">0</strong></article>
+        <article><span>Unassigned guests</span><strong id="statUnassignedGuests">0</strong></article>
+        <article><span>Total seats</span><strong id="statTotalSeats">0</strong></article>
+        <article><span>Seats remaining</span><strong id="statSeatsRemaining">0</strong></article>
+        <article><span>Conflicts</span><strong id="statConflicts">0</strong></article>
+      </section>
 
-      <!-- Top‐level editor row: Guest List (left) | Table Settings (right) -->
-      <div class="editors">
-        <div id="guestEditor" class="editor-box">
-          <h2>Edit Guest List</h2>
-          <div class="editor-inputs">
-            <input type="text" id="guestNameInput" placeholder="Guest Name" />
-            <input
-              type="number"
-              id="guestCountInput"
-              placeholder="Count"
-              min="1"
-            />
-            <button id="addGuestBtn">Add Guest</button>
+      <main class="layout">
+        <aside class="panel left-panel">
+          <div class="panel-section">
+            <div class="section-head">
+              <h2>Guests</h2>
+              <span id="guestCountBadge" class="badge">0</span>
+            </div>
+            <div class="form-grid">
+              <input id="guestNameInput" type="text" placeholder="Guest name" />
+              <input id="guestSizeInput" type="number" min="1" step="1" placeholder="Size" />
+              <input id="guestGroupInput" type="text" placeholder="Group / family" />
+              <button id="addGuestBtn">Add guest</button>
+            </div>
+            <input id="guestSearchInput" type="search" placeholder="Search guests" />
+            <div class="inline-actions">
+              <label class="file-button">
+                Import CSV
+                <input id="importCsvInput" type="file" accept=".csv,text/csv" />
+              </label>
+              <button id="exportCsvBtn" class="secondary">Export CSV</button>
+            </div>
+            <p class="help-text">CSV supports name, size, group, mustSitWith, mustNotSitWith, notes.</p>
           </div>
-          <ul id="guestEditorList" class="editor-list"></ul>
-        </div>
 
-        <div id="tableEditor" class="editor-box">
-          <h2>Table Settings</h2>
-          <div class="editor-inputs">
-            <label>
-              # of Tables:
-              <input type="number" id="numTablesInput" min="1" step="1" />
-            </label>
-            <label>
-              Seats/Table:
-              <input type="number" id="seatsPerTableInput" min="1" step="1" />
-            </label>
-            <button id="applyTableSettingsBtn">Apply Settings</button>
+          <div class="panel-section">
+            <div class="section-head">
+              <h3>Guest list</h3>
+              <span id="unassignedCountBadge" class="badge">0</span>
+            </div>
+            <div id="guestList" class="guest-list"></div>
           </div>
-        </div>
-      </div>
 
-      <div class="planner">
-        <div class="guest-list" id="guestList">
-          <h2>Guest List</h2>
-          <div class="guests-container" id="guestsContainer"></div>
-        </div>
+          <div class="panel-section">
+            <div class="section-head">
+              <h3>Table defaults</h3>
+            </div>
+            <div class="form-grid compact">
+              <input id="tableCountInput" type="number" min="1" step="1" placeholder="# of tables" />
+              <input id="defaultCapacityInput" type="number" min="1" step="1" placeholder="Default capacity" />
+              <button id="applyTableDefaultsBtn" class="secondary">Apply defaults</button>
+            </div>
+            <p class="help-text">Changing defaults adds tables if needed and updates empty tables only.</p>
+          </div>
+        </aside>
 
-        <div class="tables-container" id="tablesContainer">
-          <h2>Tables</h2>
-          <div class="tables" id="tables"></div>
-        </div>
-      </div>
+        <section class="panel center-panel">
+          <div class="section-head">
+            <h2>Tables</h2>
+            <span id="tableCountBadge" class="badge">0</span>
+          </div>
+          <div id="tableCanvas" class="table-canvas" aria-label="Table canvas"></div>
+          <p class="help-text">Drag tables to reposition them. Drag guests onto tables to seat them.</p>
+        </section>
 
-      <div id="guest-info-container">
-        <h2>Guest Info</h2>
-        <div id="guest-info"></div>
-      </div>
+        <aside class="panel right-panel">
+          <div class="panel-section">
+            <div class="section-head">
+              <h2>Inspector</h2>
+            </div>
+            <div id="inspector" class="inspector">
+              <p class="empty-state">Select a guest or table to edit details and review conflicts.</p>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <div class="section-head">
+              <h3>Conflict log</h3>
+              <span id="conflictBadge" class="badge">0</span>
+            </div>
+            <div id="conflictList" class="conflict-list"></div>
+          </div>
+        </aside>
+      </main>
+
+      <input id="jsonImportInput" type="file" accept="application/json,.json" hidden />
+      <div id="statusBar" class="status-bar" role="status" aria-live="polite"></div>
     </div>
 
     <script src="js/app.js"></script>

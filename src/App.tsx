@@ -1,4 +1,4 @@
-import { For, createEffect, createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   appendEvents,
   currentState,
@@ -14,12 +14,20 @@ import { exportCsv, csvToRows } from "./core/csv";
 import { deriveGroupViews, deriveTableViews } from "./core/reducer";
 import { executeCommand } from "./core/commands";
 import type { GuestKind, PlannerCommand, PlannerDocument, PolicyMode, TablePosition } from "./core/types";
+import { StatCard } from "./design-system/primitives";
+import { AppHeader } from "./features/layout/AppHeader";
+import { GuestsSidebar } from "./features/guests/GuestsSidebar";
+import { TablesWorkspace } from "./features/tables/TablesWorkspace";
+import { InspectorPanel } from "./features/inspector/InspectorPanel";
 
 export default function App() {
   const [doc, setDoc] = createSignal<PlannerDocument>(loadDocument());
   const [status, setStatus] = createSignal<{ type: "success" | "warning" | "error"; message: string } | null>(null);
   const [dragPreview, setDragPreview] = createSignal<{ tableId: string; left: number; top: number } | null>(null);
   const [tableNameDraft, setTableNameDraft] = createSignal<{ tableId: string; value: string } | null>(null);
+  const [groupDraft, setGroupDraft] = createSignal<{ id: string; name: string; notes: string } | null>(null);
+  const [memberDrafts, setMemberDrafts] = createSignal<Record<string, { name: string; kind: GuestKind; notes: string }>>({});
+  const [tableInspectorDraft, setTableInspectorDraft] = createSignal<{ id: string; name: string; capacity: string } | null>(null);
 
   const state = createMemo(() => currentState(doc()));
   const policy = createMemo(() => currentPolicy(doc()));
@@ -40,6 +48,20 @@ export default function App() {
   const search = createMemo(() => doc().ui.search);
   const assignedSeats = createMemo(() => groups().filter((group) => group.tableId).reduce((sum, group) => sum + group.seatCount, 0));
   const totalSeats = createMemo(() => tables().reduce((sum, table) => sum + table.table.capacity, 0));
+  const occupancyRate = createMemo(() => {
+    if (!totalSeats()) return "0%";
+    return `${Math.round((assignedSeats() / totalSeats()) * 100)}%`;
+  });
+  const localConflicts = createMemo(() => {
+    const groupId = selectedGroup()?.group.id;
+    const tableId = selectedTable()?.table.id ?? selectedGroup()?.tableId ?? null;
+    if (!groupId && !tableId) return [];
+    return conflicts().filter((issue) => {
+      if (groupId && issue.groupIds.includes(groupId)) return true;
+      if (tableId && issue.tableIds.includes(tableId)) return true;
+      return false;
+    });
+  });
 
   let dragTableState: {
     tableId: string;
@@ -50,6 +72,50 @@ export default function App() {
 
   createEffect(() => {
     saveDocument(doc());
+  });
+
+  createEffect(() => {
+    const current = status();
+    if (!current) return;
+    const timeoutId = window.setTimeout(() => {
+      setStatus((previous) => (previous === current ? null : previous));
+    }, 2400);
+    onCleanup(() => window.clearTimeout(timeoutId));
+  });
+
+  createEffect(() => {
+    const groupView = selectedGroup();
+    if (groupView) {
+      setGroupDraft({
+        id: groupView.group.id,
+        name: groupView.group.name,
+        notes: groupView.group.notes,
+      });
+      setMemberDrafts(
+        Object.fromEntries(
+          groupView.guests.map((guest) => [
+            guest.id,
+            { name: guest.name, kind: guest.kind, notes: guest.notes },
+          ]),
+        ),
+      );
+    } else {
+      setGroupDraft(null);
+      setMemberDrafts({});
+    }
+  });
+
+  createEffect(() => {
+    const tableView = selectedTable();
+    if (tableView) {
+      setTableInspectorDraft({
+        id: tableView.table.id,
+        name: tableView.table.name,
+        capacity: String(tableView.table.capacity),
+      });
+    } else {
+      setTableInspectorDraft(null);
+    }
   });
 
   function dispatch(command: PlannerCommand) {
@@ -93,9 +159,8 @@ export default function App() {
     const formData = new FormData(form);
     const names = String(formData.get("names") || "");
     const groupName = String(formData.get("groupName") || "");
-    const kind = String(formData.get("kind") || "adult") as "adult" | "kid" | "teen" | "other";
     const notes = String(formData.get("notes") || "");
-    dispatch({ type: "addGuests", names, groupName, kind, notes });
+    dispatch({ type: "addGuests", names, groupName, notes });
     form.reset();
   }
 
@@ -289,6 +354,36 @@ export default function App() {
     dispatch({ type: "updateGuest", guestId, name, kind, notes });
   }
 
+  function setGroupDraftField(field: "name" | "notes", value: string) {
+    setGroupDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function commitGroupDraft() {
+    const draft = groupDraft();
+    const groupView = selectedGroup();
+    if (!draft || !groupView || draft.id !== groupView.group.id) return;
+    if (draft.name !== groupView.group.name) updateGroupName(draft.id, draft.name);
+    if (draft.notes !== groupView.group.notes) updateGroupNotes(draft.id, draft.notes);
+  }
+
+  function setMemberDraftField(guestId: string, field: "name" | "kind" | "notes", value: string) {
+    setMemberDrafts((current) => {
+      const next = current[guestId];
+      if (!next) return current;
+      return { ...current, [guestId]: { ...next, [field]: value } as { name: string; kind: GuestKind; notes: string } };
+    });
+  }
+
+  function commitMemberDraft(guestId: string) {
+    const groupView = selectedGroup();
+    const guest = groupView?.guests.find((item) => item.id === guestId);
+    const draft = memberDrafts()[guestId];
+    if (!guest || !draft) return;
+    if (draft.name !== guest.name || draft.kind !== guest.kind || draft.notes !== guest.notes) {
+      updateGuest(guestId, draft.name, draft.kind, draft.notes);
+    }
+  }
+
   function updateTableName(tableId: string, name: string) {
     dispatch({ type: "renameTable", tableId, name });
   }
@@ -320,6 +415,21 @@ export default function App() {
     dispatch({ type: "setTableCapacity", tableId, capacity });
   }
 
+  function setTableInspectorField(field: "name" | "capacity", value: string) {
+    setTableInspectorDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function commitTableInspectorDraft() {
+    const draft = tableInspectorDraft();
+    const tableView = selectedTable();
+    if (!draft || !tableView || draft.id !== tableView.table.id) return;
+    if (draft.name !== tableView.table.name) updateTableName(draft.id, draft.name);
+    const parsedCapacity = Number.parseInt(draft.capacity, 10);
+    if (Number.isFinite(parsedCapacity) && parsedCapacity > 0 && parsedCapacity !== tableView.table.capacity) {
+      updateTableCapacity(draft.id, parsedCapacity);
+    }
+  }
+
   function updatePolicy(key: "tableCapacity" | "incompatibleGuests" | "groupSplit" | "duplicateNames", mode: PolicyMode) {
     dispatch({ type: "setPolicy", policy: { [key]: mode } as Partial<PlannerDocument["policy"]> });
   }
@@ -347,475 +457,93 @@ export default function App() {
     });
   }
 
+  function exportPlannerCsv() {
+    const blob = new Blob([exportCsv(state())], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = window.document.createElement("a");
+    a.href = url;
+    a.download = "wedding-table-plan.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div class="app-shell">
-      <header class="app-header">
-        <div>
-          <p class="eyebrow">Local-first seating planner</p>
-          <h1>Wedding Table Planner</h1>
-          <p class="subtitle">Groups are the seatable unit. Guests are individuals inside those groups.</p>
-        </div>
-        <div class="header-actions">
-          <button class="secondary" onClick={undo}>
-            Undo
-          </button>
-          <button class="secondary" onClick={redo}>
-            Redo
-          </button>
-          <button class="secondary" onClick={exportJson}>
-            Export JSON
-          </button>
-          <label class="file-button secondary">
-            Import JSON
-            <input type="file" accept="application/json,.json" onChange={(e) => importJson(e.currentTarget.files?.[0] || null)} />
-          </label>
-          <label class="file-button secondary">
-            Import CSV
-            <input type="file" accept=".csv,text/csv" onChange={(e) => importCsv(e.currentTarget.files?.[0] || null)} />
-          </label>
-          <button class="secondary" onClick={() => {
-            const blob = new Blob([exportCsv(state())], { type: "text/csv" });
-            const url = URL.createObjectURL(blob);
-            const a = window.document.createElement("a");
-            a.href = url;
-            a.download = "wedding-table-plan.csv";
-            a.click();
-            URL.revokeObjectURL(url);
-          }}>
-            Export CSV
-          </button>
-        </div>
-      </header>
+      <AppHeader groupCount={groups().length} tableCount={tables().length} />
 
       <section class="kpi-grid">
-        <article>
-          <span>Groups</span>
-        <strong>{groups().length}</strong>
-        </article>
-        <article>
-          <span>Unseated</span>
-          <strong>{unassignedGroups().length}</strong>
-        </article>
-        <article>
-          <span>Tables</span>
-          <strong>{tables().length}</strong>
-        </article>
-        <article>
-          <span>Seats used</span>
-          <strong>{assignedSeats()}</strong>
-        </article>
-        <article>
-          <span>Conflicts</span>
-          <strong>{conflicts().length}</strong>
-        </article>
-        <article>
-          <span>Search</span>
-          <strong>{search() ? "On" : "Off"}</strong>
-        </article>
-        <article>
-          <span>Total seats</span>
-          <strong>{totalSeats()}</strong>
-        </article>
+        <StatCard label="Groups">{groups().length}</StatCard>
+        <StatCard label="Unseated">{unassignedGroups().length}</StatCard>
+        <StatCard label="Tables">{tables().length}</StatCard>
+        <StatCard label="Seats placed">{assignedSeats()}</StatCard>
+        <StatCard label="Capacity">{totalSeats()}</StatCard>
+        <StatCard label="Occupancy">{occupancyRate()}</StatCard>
       </section>
 
       <main class="layout">
-        <aside class="panel left-panel">
-          <div class="panel-section">
-            <div class="section-head">
-              <h2>Guests</h2>
-              <span class="badge">{unassignedGroups().length}</span>
-            </div>
-            <form
-              class="guest-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                addGroupFromForm(e.currentTarget);
-              }}
-            >
-              <div class="form-grid">
-                <input name="names" type="text" placeholder="Guest names, comma-separated" />
-                <input name="groupName" type="text" placeholder="Group / family name" />
-                <select name="kind">
-                  <option value="adult">Adult</option>
-                  <option value="kid">Kid</option>
-                  <option value="teen">Teen</option>
-                  <option value="other">Other</option>
-                </select>
-                <input name="notes" type="text" placeholder="Group notes" />
-                <button type="submit">Add guests</button>
-              </div>
-            </form>
-            <input value={search()} onInput={(e) => updateSearch(e.currentTarget.value)} type="search" placeholder="Search unseated groups" />
-          </div>
+        <GuestsSidebar
+          unassignedCount={unassignedGroups().length}
+          visibleGroups={visibleGroups()}
+          selectedGroupId={selectedGroup()?.group.id ?? null}
+          search={search()}
+          policy={policy()}
+          onAddGuests={addGroupFromForm}
+          onSearch={updateSearch}
+          onSelectGroup={selectGroup}
+          onGroupDragStart={handleGroupDragStart}
+          onUnassignedDrop={handleUnassignedDrop}
+          onAddTable={addTable}
+          onUpdatePolicy={updatePolicy}
+          onUndo={undo}
+          onRedo={redo}
+          onExportJson={exportJson}
+          onExportCsv={exportPlannerCsv}
+          onImportJson={importJson}
+          onImportCsv={importCsv}
+        />
 
-          <div class="panel-section">
-            <div class="section-head">
-              <h3>Unseated groups</h3>
-            </div>
-              <div class="guest-list" onDragOver={(e) => e.preventDefault()} onDrop={handleUnassignedDrop}>
-              <For each={visibleGroups()}>
-                {(groupView) => (
-                  <div
-                    classList={{
-                      "guest-card": true,
-                      selected: selectedGroup()?.group.id === groupView.group.id,
-                      warning: groupView.conflictCount > 0,
-                      blocked: groupView.status === "blocked",
-                    }}
-                    draggable="true"
-                    data-group-id={groupView.group.id}
-                    onClick={() => selectGroup(groupView.group.id)}
-                    onDragStart={(e) => handleGroupDragStart(e, groupView.group.id)}
-                  >
-                    <div>
-                      <strong>{groupView.group.name}</strong>
-                      <div class="guest-meta">
-                        {groupView.seatCount} seat{groupView.seatCount === 1 ? "" : "s"}
-                        {groupView.conflictCount ? ` • ${groupView.conflictCount} issue${groupView.conflictCount === 1 ? "" : "s"}` : ""}
-                      </div>
-                    </div>
-                    <div class="guest-summary">{groupView.guests.map((guest) => guest.name).join(", ")}</div>
-                  </div>
-                )}
-              </For>
-            </div>
-          </div>
+        <TablesWorkspace
+          tableCount={tables().length}
+          tables={tables()}
+          selectedTableId={selectedTable()?.table.id ?? null}
+          dragPreview={dragPreview()}
+          tableNameDraft={tableNameDraft()}
+          conflicts={conflicts()}
+          groups={groups()}
+          onAddTable={addTable}
+          onSelectTable={selectTable}
+          onSelectGroup={selectGroup}
+          onStartTableDrag={startTableDrag}
+          onTableDrop={handleGroupDrop}
+          onGroupDragStart={handleGroupDragStart}
+          onUnseatGroup={(groupId) => dispatch({ type: "unseatGroup", groupId })}
+          onBeginTableNameEdit={beginTableNameEdit}
+          onSetDraftTableName={setDraftTableName}
+          onCommitTableNameEdit={commitTableNameEdit}
+          onCancelTableNameEdit={cancelTableNameEdit}
+          onUpdateTableCapacity={updateTableCapacity}
+        />
 
-            <div class="panel-section">
-              <div class="section-head">
-                <h3>Table defaults</h3>
-                <button class="secondary" onClick={addTable}>
-                  Add table
-                </button>
-              </div>
-            <p class="help-text">Tables are the only occupancy container. Groups seat together.</p>
-          </div>
-          <div class="panel-section">
-            <div class="section-head">
-              <h3>Action policy</h3>
-            </div>
-            <div class="policy-grid">
-              <label>
-                Table capacity
-                <select value={policy().tableCapacity} onInput={(e) => updatePolicy("tableCapacity", e.currentTarget.value as PolicyMode)}>
-                  <option value="ignore">Ignore</option>
-                  <option value="warning">Warn</option>
-                  <option value="blocked">Block</option>
-                </select>
-              </label>
-              <label>
-                Incompatible guests
-                <select value={policy().incompatibleGuests} onInput={(e) => updatePolicy("incompatibleGuests", e.currentTarget.value as PolicyMode)}>
-                  <option value="ignore">Ignore</option>
-                  <option value="warning">Warn</option>
-                  <option value="blocked">Block</option>
-                </select>
-              </label>
-              <label>
-                Group splits
-                <select value={policy().groupSplit} onInput={(e) => updatePolicy("groupSplit", e.currentTarget.value as PolicyMode)}>
-                  <option value="ignore">Ignore</option>
-                  <option value="warning">Warn</option>
-                  <option value="blocked">Block</option>
-                </select>
-              </label>
-              <label>
-                Duplicate names
-                <select value={policy().duplicateNames} onInput={(e) => updatePolicy("duplicateNames", e.currentTarget.value as PolicyMode)}>
-                  <option value="ignore">Ignore</option>
-                  <option value="warning">Warn</option>
-                  <option value="blocked">Block</option>
-                </select>
-              </label>
-            </div>
-          </div>
-        </aside>
-
-        <section class="panel center-panel">
-          <div class="section-head">
-            <h2>Tables</h2>
-            <span class="badge">{tables().length}</span>
-          </div>
-          <div class="table-canvas">
-            <For each={tables()}>
-              {(tableView) => {
-                const table = tableView.table;
-                return (
-                  <section
-                    classList={{
-                      "table-card": true,
-                      selected: selectedTable()?.table.id === table.id,
-                      "over-capacity": tableView.used > table.capacity,
-                      warning: tableView.conflictCount > 0,
-                    }}
-                    data-table-id={table.id}
-                    style={{
-                      left: `${dragPreview()?.tableId === table.id ? dragPreview()!.left : table.position.left}px`,
-                      top: `${dragPreview()?.tableId === table.id ? dragPreview()!.top : table.position.top}px`,
-                      "z-index": `${table.zIndex}`,
-                    }}
-                    onClick={() => selectTable(table.id)}
-                    onMouseDown={(e) => startTableDrag(e, table.id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => handleGroupDrop(e, table.id)}
-                  >
-                    <div class="table-head">
-                      <input
-                        value={tableNameDraft()?.tableId === table.id ? tableNameDraft()!.value : table.name}
-                        onFocus={() => beginTableNameEdit(table.id, table.name)}
-                        onInput={(e) => setDraftTableName(table.id, e.currentTarget.value)}
-                        onBlur={() => commitTableNameEdit(table.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.currentTarget.blur();
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelTableNameEdit(table.id);
-                            e.currentTarget.blur();
-                          }
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label="Table name"
-                      />
-                      <input
-                        class="capacity-input"
-                        type="number"
-                        min="1"
-                        value={table.capacity}
-                        onInput={(e) => updateTableCapacity(table.id, Number.parseInt(e.currentTarget.value, 10))}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label="Table capacity"
-                      />
-                    </div>
-                    <div class="table-summary">
-                      {tableView.used} / {table.capacity} seats used
-                      {tableView.conflictCount ? ` • ${tableView.conflictCount} issue${tableView.conflictCount === 1 ? "" : "s"}` : ""}
-                    </div>
-                    <div class="table-guests">
-                      <For each={tableView.groups}>
-                        {(groupView) => (
-                          <div
-                            classList={{
-                              "table-guest": true,
-                              warning: groupView.conflictCount > 0,
-                            }}
-                            draggable="true"
-                            data-group-id={groupView.group.id}
-                            onDragStart={(e) => handleGroupDragStart(e, groupView.group.id)}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              selectGroup(groupView.group.id);
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                          >
-                            {groupView.group.name}
-                            <button
-                              type="button"
-                              class="chip-action"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                dispatch({ type: "unseatGroup", groupId: groupView.group.id });
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </section>
-                );
-              }}
-            </For>
-          </div>
-        </section>
-
-        <aside class="panel right-panel">
-          <div class="panel-section">
-            <div class="section-head">
-              <h2>Inspector</h2>
-            </div>
-            {(() => {
-              const groupView = selectedGroup();
-              if (groupView) {
-                return (
-                  <div class="detail-card">
-                    <strong>Group</strong>
-                    <label>
-                      Name
-                      <input value={groupView.group.name} onInput={(e) => updateGroupName(groupView.group.id, e.currentTarget.value)} />
-                    </label>
-                    <div class="muted">Members: {groupView.guests.map((guest) => guest.name).join(", ")}</div>
-                    <div class="muted">Table: {groupView.tableId ? tables().find((table) => table.table.id === groupView.tableId)?.table.name : "Unassigned"}</div>
-                    <div class="muted">Issues: {groupView.conflictCount}</div>
-                    <label>
-                      Group notes
-                      <textarea value={groupView.group.notes} onInput={(e) => updateGroupNotes(groupView.group.id, e.currentTarget.value)} />
-                    </label>
-                    <div class="card-actions">
-                      <button
-                        type="button"
-                        class="secondary"
-                        onClick={() => {
-                          if (groupView.tableId) dispatch({ type: "unseatGroup", groupId: groupView.group.id });
-                          else seatSelectedGroup();
-                        }}
-                      >
-                        {state().assignments[groupView.group.id] ? "Unseat" : selectedTable() ? `Seat at ${selectedTable()!.table.name}` : "Seat group"}
-                      </button>
-                    </div>
-                    <div class="constraint-panel">
-                      <label>
-                        Add must-sit constraint
-                        <select
-                          onChange={(e) => {
-                            const target = e.currentTarget.value;
-                            if (target) addConstraint(groupView.group.id, "mustSitWith", target);
-                            e.currentTarget.value = "";
-                          }}
-                        >
-                          <option value="">Choose group</option>
-                          <For each={groups().filter((item) => item.group.id !== groupView.group.id)}>
-                            {(candidate) => <option value={candidate.group.id}>{candidate.group.name}</option>}
-                          </For>
-                        </select>
-                      </label>
-                      <label>
-                        Add keep-apart constraint
-                        <select
-                          onChange={(e) => {
-                            const target = e.currentTarget.value;
-                            if (target) addConstraint(groupView.group.id, "mustNotSitWith", target);
-                            e.currentTarget.value = "";
-                          }}
-                        >
-                          <option value="">Choose group</option>
-                          <For each={groups().filter((item) => item.group.id !== groupView.group.id)}>
-                            {(candidate) => <option value={candidate.group.id}>{candidate.group.name}</option>}
-                          </For>
-                        </select>
-                      </label>
-                      <div class="constraint-list">
-                        <For each={groupView.group.mustSitWith}>
-                          {(targetId) => {
-                            const target = groups().find((candidate) => candidate.group.id === targetId);
-                            return (
-                              <button type="button" class="constraint-pill" onClick={() => removeConstraint(groupView.group.id, "mustSitWith", targetId)}>
-                                must sit with {target?.group.name || targetId}
-                              </button>
-                            );
-                          }}
-                        </For>
-                        <For each={groupView.group.mustNotSitWith}>
-                          {(targetId) => {
-                            const target = groups().find((candidate) => candidate.group.id === targetId);
-                            return (
-                              <button type="button" class="constraint-pill" onClick={() => removeConstraint(groupView.group.id, "mustNotSitWith", targetId)}>
-                                keep apart {target?.group.name || targetId}
-                              </button>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </div>
-                    <div class="member-list">
-                      <For each={groupView.guests}>
-                        {(guest) => (
-                          <div class="member-row">
-                            <input value={guest.name} onInput={(e) => updateGuest(guest.id, e.currentTarget.value, guest.kind, guest.notes)} />
-                            <select onChange={(e) => updateGuest(guest.id, guest.name, e.currentTarget.value as GuestKind, guest.notes)} value={guest.kind}>
-                              <option value="adult">adult</option>
-                              <option value="kid">kid</option>
-                              <option value="teen">teen</option>
-                              <option value="other">other</option>
-                            </select>
-                            <input
-                              value={guest.notes}
-                              onInput={(e) => updateGuest(guest.id, guest.name, guest.kind, e.currentTarget.value)}
-                              placeholder="Member notes"
-                            />
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                );
-              }
-
-              const tableView = selectedTable();
-              if (tableView) {
-                return (
-                  <div class="detail-card">
-                    <strong>Table</strong>
-                    <label>
-                      Name
-                      <input
-                        value={tableNameDraft()?.tableId === tableView.table.id ? tableNameDraft()!.value : tableView.table.name}
-                        onFocus={() => beginTableNameEdit(tableView.table.id, tableView.table.name)}
-                        onInput={(e) => setDraftTableName(tableView.table.id, e.currentTarget.value)}
-                        onBlur={() => commitTableNameEdit(tableView.table.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.currentTarget.blur();
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelTableNameEdit(tableView.table.id);
-                            e.currentTarget.blur();
-                          }
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </label>
-                    <label>
-                      Capacity
-                      <input
-                        type="number"
-                        min="1"
-                        value={tableView.table.capacity}
-                        onInput={(e) => updateTableCapacity(tableView.table.id, Number.parseInt(e.currentTarget.value, 10))}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </label>
-                    <div class="muted">
-                      Used: {tableView.used} / {tableView.table.capacity}
-                    </div>
-                    <div class="muted">Groups: {tableView.groups.map((group) => group.group.name).join(", ") || "None"}</div>
-                  </div>
-                );
-              }
-
-              return <p class="empty-state">Select a group or table.</p>;
-            })()}
-          </div>
-
-          <div class="panel-section">
-            <div class="section-head">
-              <h3>Conflicts</h3>
-              <span class="badge">{conflicts().length}</span>
-            </div>
-            <div class="conflict-list">
-              <For each={conflicts()}>
-              {(issue) => (
-                  <button
-                    class={`conflict-item ${issue.severity}`}
-                    onClick={() => {
-                      const groupId = issue.groupIds[0];
-                      const tableId = issue.tableIds[0];
-                      if (groupId && groups().some((item) => item.group.id === groupId)) selectGroup(groupId);
-                      else if (tableId && tables().some((item) => item.table.id === tableId)) selectTable(tableId);
-                    }}
-                  >
-                    {issue.message}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </aside>
+        <InspectorPanel
+          selectedGroup={selectedGroup()}
+          selectedTable={selectedTable()}
+          tables={tables()}
+          groups={groups()}
+          localConflicts={localConflicts()}
+          groupDraft={groupDraft()}
+          memberDrafts={memberDrafts()}
+          tableInspectorDraft={tableInspectorDraft()}
+          onSetGroupDraftField={setGroupDraftField}
+          onCommitGroupDraft={commitGroupDraft}
+          onSeatSelectedGroup={seatSelectedGroup}
+          onUnseatGroup={(groupId) => dispatch({ type: "unseatGroup", groupId })}
+          onAddConstraint={addConstraint}
+          onRemoveConstraint={removeConstraint}
+          onSetMemberDraftField={setMemberDraftField}
+          onCommitMemberDraft={commitMemberDraft}
+          onSetTableInspectorField={setTableInspectorField}
+          onCommitTableInspectorDraft={commitTableInspectorDraft}
+        />
       </main>
 
       {status() ? <div class={`status-bar visible ${status()!.type}`}>{status()!.message}</div> : null}

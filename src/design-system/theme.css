@@ -1,0 +1,37 @@
+:root {
+  --font-sans: "Avenir Next", "Inter", "Segoe UI", sans-serif;
+  --color-ink: #1f2937;
+  --color-ink-muted: #5d6b7c;
+  --color-surface: rgba(255, 255, 255, 0.82);
+  --color-surface-strong: rgba(248, 250, 252, 0.96);
+  --color-surface-soft: rgba(255, 255, 255, 0.68);
+  --color-border: rgba(120, 139, 163, 0.24);
+  --color-border-strong: rgba(120, 139, 163, 0.38);
+  --color-canvas-start: #f7f1e8;
+  --color-canvas-end: #edf2f7;
+  --color-accent: #23425d;
+  --color-accent-hover: #1b3449;
+  --color-accent-soft: #dbe7f0;
+  --color-accent-text: #ffffff;
+  --color-success: #166534;
+  --color-warning: #b45309;
+  --color-danger: #b42318;
+  --color-guest-card-start: #3e63a8;
+  --color-guest-card-end: #29446f;
+  --color-guest-card-text: #ffffff;
+  --color-grid: rgba(148, 163, 184, 0.14);
+  --color-focus: #2563eb;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+  --shadow-panel: 0 20px 50px rgba(15, 23, 42, 0.08);
+  --shadow-card: 0 12px 28px rgba(15, 23, 42, 0.08);
+  --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.18);
+  --space-xs: 0.4rem;
+  --space-sm: 0.6rem;
+  --space-md: 0.9rem;
+  --space-lg: 1.2rem;
+  --space-xl: 1.5rem;
+}
